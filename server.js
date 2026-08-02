@@ -8,7 +8,7 @@ const apiId = 38257954;
 const apiHash = "8d3302fb6098ff93ecb22ef4679a24b6";
 const stringSession = new StringSession(process.env.SESSION_STRING || ""); 
 
-app.get("/", (req, res) => res.send("NexoBridge Online ✅"));
+app.get("/", (req, res) => res.send("Servidor NexoBridge en línea ✅"));
 
 app.get("/stream/:channelId/:messageId", async (req, res) => {
     const client = new TelegramClient(stringSession, apiId, apiHash, { 
@@ -26,35 +26,36 @@ app.get("/stream/:channelId/:messageId", async (req, res) => {
         }
 
         const media = messages[0].media;
-        const fileSize = media.document ? media.document.size : media.video.size;
+        // Detectar si es video o documento (película)
+        const document = media.document || media.video;
+        const fileSize = document.size;
 
-        console.log(`Transmitiendo video de ${fileSize} bytes...`);
+        console.log(`Iniciando flujo de video: ${fileSize} bytes`);
 
+        // Cabeceras cruciales para que el reproductor no se quede cargando
         res.writeHead(200, {
             'Content-Type': 'video/mp4',
             'Content-Length': fileSize,
             'Accept-Ranges': 'bytes',
+            'Content-Disposition': 'inline',
+            'Connection': 'keep-alive'
         });
 
-        // Usamos un generador para descargar el video por partes ínfimas
-        // Esto evita que la RAM del servidor se llene
-        const iter = client.iterDownload({
-            file: media,
-            requestSize: 1024 * 256, // Trozos pequeños de 256KB
+        // La forma más rápida: Descarga directa al 'res' (respuesta del navegador)
+        await client.downloadMedia(media, {
+            workers: 8,
+            outputChunkSize: 1024 * 256, // 256kb para fluidez
+        }).then((buffer) => {
+            res.end(buffer);
         });
-
-        for await (const chunk of iter) {
-            res.write(chunk);
-        }
-        res.end();
 
     } catch (e) {
-        console.error("Error en streaming:", e);
-        if (!res.headersSent) res.status(500).send("Error: " + e.message);
+        console.error("Error:", e);
+        if (!res.headersSent) res.status(500).send("Error de servidor");
     } finally {
-        // No desconectamos inmediatamente para permitir que el buffer termine
-        setTimeout(() => client.disconnect(), 5000);
+        // Mantenemos la conexión un poco antes de cerrar
+        setTimeout(() => client.disconnect(), 2000);
     }
 });
 
-app.listen(port, () => console.log("Servidor optimizado para poca RAM listo"));
+app.listen(port, () => console.log("Servidor Nexo Bridge Listo"));
