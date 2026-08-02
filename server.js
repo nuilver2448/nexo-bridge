@@ -8,46 +8,53 @@ const apiId = 38257954;
 const apiHash = "8d3302fb6098ff93ecb22ef4679a24b6";
 const stringSession = new StringSession(process.env.SESSION_STRING || ""); 
 
-app.get("/", (req, res) => {
-    res.send("Servidor NexoBridge Activo ✅");
-});
+app.get("/", (req, res) => res.send("NexoBridge Online ✅"));
 
 app.get("/stream/:channelId/:messageId", async (req, res) => {
     const client = new TelegramClient(stringSession, apiId, apiHash, { 
-        connectionRetries: 5 
+        connectionRetries: 5,
+        autoReconnect: true
     });
-
+    
     try {
         await client.connect();
-        const channelId = req.params.channelId;
-        const messageId = parseInt(req.params.messageId);
-
-        console.log(`Buscando Canal: ${channelId}, Mensaje: ${messageId}`);
-
-        const messages = await client.getMessages(channelId, { ids: [messageId] });
+        const { channelId, messageId } = req.params;
         
+        const messages = await client.getMessages(channelId, { ids: [parseInt(messageId)] });
         if (!messages || messages.length === 0 || !messages[0].media) {
-            return res.status(404).send("Video no encontrado. Verifica IDs.");
+            return res.status(404).send("Video no encontrado");
         }
 
         const media = messages[0].media;
-        
-        // Cabeceras de video
-        res.setHeader('Content-Type', 'video/mp4');
-        
-        // Descarga el video en partes y lo envía al navegador
-        const buffer = await client.downloadMedia(media, {
-            workers: 4
+        const fileSize = media.document ? media.document.size : media.video.size;
+
+        console.log(`Transmitiendo video de ${fileSize} bytes...`);
+
+        res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': fileSize,
+            'Accept-Ranges': 'bytes',
         });
-        
-        res.send(buffer);
+
+        // Usamos un generador para descargar el video por partes ínfimas
+        // Esto evita que la RAM del servidor se llene
+        const iter = client.iterDownload({
+            file: media,
+            requestSize: 1024 * 256, // Trozos pequeños de 256KB
+        });
+
+        for await (const chunk of iter) {
+            res.write(chunk);
+        }
+        res.end();
 
     } catch (e) {
-        console.error("Error en el servidor:", e);
-        res.status(500).send("Error: " + e.message);
+        console.error("Error en streaming:", e);
+        if (!res.headersSent) res.status(500).send("Error: " + e.message);
     } finally {
-        await client.disconnect();
+        // No desconectamos inmediatamente para permitir que el buffer termine
+        setTimeout(() => client.disconnect(), 5000);
     }
 });
 
-app.listen(port, () => console.log(`Servidor Nexo iniciado en puerto ${port}`));
+app.listen(port, () => console.log("Servidor optimizado para poca RAM listo"));
